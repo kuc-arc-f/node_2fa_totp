@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TOTP ログインサンプル</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 420px; margin: 2rem auto; padding: 0 1rem; }
+  section { display: none; border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  section.active { display: block; }
+  input, button { display: block; width: 100%; box-sizing: border-box; margin: .4rem 0; padding: .6rem; font-size: 1rem; }
+  #msg { color: #b00020; min-height: 1.5em; }
+  code { word-break: break-all; }
+  img { max-width: 100%; }
+</style>
+</head>
+<body>
+<h1>TOTP ログインサンプル</h1>
+<p id="msg"></p>
+
+<section id="login" class="active">
+  <h2>ログイン</h2>
+  <input id="u" placeholder="ユーザー名" autocomplete="username">
+  <input id="p" type="password" placeholder="パスワード" autocomplete="current-password">
+  <button onclick="login()">ログイン</button>
+  <button onclick="register()">新規登録</button>
+</section>
+
+<section id="otp">
+  <h2>認証コード入力</h2>
+  <input id="t" inputmode="numeric" maxlength="6" placeholder="6 桁コード" autocomplete="one-time-code">
+  <button onclick="verifyOtp()">認証</button>
+  <input id="rc" placeholder="リカバリーコード (紛失時)">
+  <button onclick="useRecovery()">リカバリーコードで認証</button>
+</section>
+
+<section id="home">
+  <h2>ようこそ <span id="name"></span></h2>
+  <p>2 段階認証: <b id="state"></b></p>
+  <button id="btnSetup" onclick="setup()">2 段階認証を有効にする</button>
+  <div id="setupArea" style="display:none">
+    <p>認証アプリで QR を読み取り、表示された 6 桁コードを入力してください。</p>
+    <img id="qr" alt="QR">
+    <p>手入力キー: <code id="mk"></code></p>
+    <input id="et" inputmode="numeric" maxlength="6" placeholder="6 桁コード">
+    <button onclick="enable()">有効化</button>
+  </div>
+  <div id="rcArea" style="display:none">
+    <p><b>リカバリーコード (今だけ表示 / 必ず保管)</b></p>
+    <pre id="codes"></pre>
+  </div>
+  <button onclick="logout()">ログアウト</button>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const show = (id) => { ['login','otp','home'].forEach(s => $(s).classList.toggle('active', s === id)); };
+const say = (m) => { $('msg').textContent = m || ''; };
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'エラー');
+  return data;
+}
+
+async function register() {
+  try { await api('/api/register', { username: $('u').value, password: $('p').value }); say('登録しました。ログインしてください。'); }
+  catch (e) { say(e.message); }
+}
+async function login() {
+  try {
+    const d = await api('/api/login', { username: $('u').value, password: $('p').value });
+    say('');
+    d.status === 'otp_required' ? show('otp') : loadHome();
+  } catch (e) { say(e.message); }
+}
+async function verifyOtp() {
+  try { await api('/api/login/otp', { token: $('t').value }); say(''); loadHome(); }
+  catch (e) { say(e.message); }
+}
+async function useRecovery() {
+  try { await api('/api/login/otp', { recoveryCode: $('rc').value }); say(''); loadHome(); }
+  catch (e) { say(e.message); }
+}
+async function loadHome() {
+  const r = await fetch('/api/me');
+  if (!r.ok) return show('login');
+  const me = await r.json();
+  $('name').textContent = me.username;
+  $('state').textContent = me.totpEnabled ? '有効' : '無効';
+  $('btnSetup').style.display = me.totpEnabled ? 'none' : 'block';
+  show('home');
+}
+async function setup() {
+  try {
+    const d = await api('/api/2fa/setup');
+    $('qr').src = d.qrDataUrl; $('mk').textContent = d.manualKey;
+    $('setupArea').style.display = 'block'; say('');
+  } catch (e) { say(e.message); }
+}
+async function enable() {
+  try {
+    const d = await api('/api/2fa/enable', { token: $('et').value });
+    $('setupArea').style.display = 'none';
+    $('codes').textContent = d.recoveryCodes.join('\n');
+    $('rcArea').style.display = 'block';
+    say(''); loadHome();
+  } catch (e) { say(e.message); }
+}
+async function logout() { await api('/api/logout'); show('login'); }
+
+loadHome();
+</script>
+</body>
+</html>
